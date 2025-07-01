@@ -1,110 +1,87 @@
 import pandas as pd
 import numpy as np
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler, OneHotEncoder
-from sklearn.compose import ColumnTransformer
-from sklearn.metrics import r2_score, mean_squared_error # Adicionado mean_squared_error para consistência
 import tensorflow as tf
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dense, InputLayer
-from tensorflow.keras.callbacks import EarlyStopping
+from tensorflow.keras.layers import Dense
 
-# --- 1. Carregar e Pré-processar os Dados ---
-
-# Carregar o dataset
+# Carregar dados
 df = pd.read_csv('auto-mpg.csv')
-
-print("Primeiras 5 linhas do DataFrame:")
+print("Primeiras 5 linhas:")
 print(df.head())
-print("\nInformações do DataFrame:")
-print(df.info())
 
-# A coluna 'horsepower' é carregada como object devido a valores '?'
-# Vamos substituir '?' por NaN e converter para numérico
+# Limpar dados
 df = df.replace('?', np.nan)
 df['horsepower'] = pd.to_numeric(df['horsepower'])
-
-# Lidar com valores ausentes: remover linhas com NaN (apenas em 'horsepower' neste caso)
 df.dropna(inplace=True)
 
-# Separar features (X) e target (y)
-X = df.drop('horsepower', axis=1)
-y = df['horsepower']
+# Preparar dados
+features = ['mpg', 'cylinders', 'displacement', 'weight', 'acceleration', 'model year']
+X = df[features].values
+y = df['horsepower'].values
 
-# Identificar colunas numéricas e categóricas
-categorical_features = ['origin']
-numerical_features = ['mpg', 'cylinders', 'displacement', 'weight', 'acceleration', 'model year']
+# Dividir dados (70% treino)
+np.random.seed(42)
+indices = np.random.permutation(len(X))
+train_size = int(0.7 * len(X))
 
-preprocessor = ColumnTransformer(
-    transformers=[
-        ('num', StandardScaler(), numerical_features),
-        ('cat', OneHotEncoder(handle_unknown='ignore'), categorical_features)
-    ],
-    remainder='drop' # Descarta colunas não especificadas (como 'car name')
-)
+X_train = X[indices[:train_size]]
+X_test = X[indices[train_size:]]
+y_train = y[indices[:train_size]]
+y_test = y[indices[train_size:]]
 
-# Dividir os dados em conjuntos de treino e teste
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+# Normalizar
+X_mean = np.mean(X_train, axis=0)
+X_std = np.std(X_train, axis=0)
+X_train_scaled = (X_train - X_mean) / X_std
+X_test_scaled = (X_test - X_mean) / X_std
 
-# Aplicar o pré-processamento aos dados de treino e teste para o TensorFlow
-# É importante que o ColumnTransformer seja ajustado APENAS nos dados de treino (fit_transform)
-# e depois apenas transformado nos dados de teste (transform)
-X_train_processed = preprocessor.fit_transform(X_train)
-X_test_processed = preprocessor.transform(X_test)
+print(f"\nDados: {X_train.shape[0]} treino, {X_test.shape[0]} teste")
 
-print("\n--- Pré-processamento Concluído para TensorFlow ---")
-print("Formato dos dados de treino processados (para TensorFlow):", X_train_processed.shape)
-print("Formato dos dados de teste processados (para TensorFlow):", X_test_processed.shape)
-
-# --- 2. Implementar e Treinar o Modelo com TensorFlow ---
-
-# Construir o modelo com TensorFlow
-model_tf = Sequential([
-    InputLayer(input_shape=(X_train_processed.shape[1],)), # Camada de entrada
-    Dense(100, activation='relu', name='hidden_layer_1'),  # Primeira camada oculta
-    Dense(50, activation='relu', name='hidden_layer_2'),   # Segunda camada oculta
-    Dense(1, name='output_layer')                          # Camada de saída para regressão (1 neurônio sem ativação)
+# Criar modelo
+model = Sequential([
+    Dense(100, activation='relu', input_shape=(6,)),
+    Dense(50, activation='relu'),
+    Dense(1)
 ])
 
-# Compilar o modelo
-model_tf.compile(optimizer='adam', loss='mse', metrics=['mae'])
+model.compile(optimizer='adam', loss='mse')
 
-# Exibir um resumo da arquitetura do modelo
-print("\n--- Resumo do Modelo TensorFlow ---")
-model_tf.summary()
+# Treinar
+print("\nTreinando...")
+model.fit(X_train_scaled, y_train, epochs=100, batch_size=32, verbose=0)
+print("Treinamento concluído!")
 
-# Definir um callback para Early Stopping no TensorFlow
-early_stopping_tf = EarlyStopping(
-    monitor='val_loss',
-    patience=20,
-    restore_best_weights=True
-)
+# Avaliar modelo
+y_pred_train = model.predict(X_train_scaled, verbose=0).flatten()
+y_pred_test = model.predict(X_test_scaled, verbose=0).flatten()
 
-# Treinar o modelo
-print("\n--- Iniciando treinamento do modelo TensorFlow ---")
-history = model_tf.fit(X_train_processed, y_train,
-                       epochs=200,
-                       batch_size=32,
-                       validation_split=0.2,
-                       callbacks=[early_stopping_tf],
-                       verbose=1)
+# Calcular R² e MSE
+def r2_score(y_true, y_pred):
+    ss_res = np.sum((y_true - y_pred) ** 2)
+    ss_tot = np.sum((y_true - np.mean(y_true)) ** 2)
+    return 1 - (ss_res / ss_tot)
 
-print("\n--- Treinamento do Modelo TensorFlow Concluído ---")
+def mse(y_true, y_pred):
+    return np.mean((y_true - y_pred) ** 2)
 
-# --- 3. Avaliar o Modelo TensorFlow ---
+r2_train = r2_score(y_train, y_pred_train)
+r2_test = r2_score(y_test, y_pred_test)
+mse_train = mse(y_train, y_pred_train)
+mse_test = mse(y_test, y_pred_test)
 
-print("\n--- Avaliando o Modelo TensorFlow no conjunto de TESTE ---")
-# Avalia a perda e o MAE no conjunto de teste
-loss_tf, mae_tf = model_tf.evaluate(X_test_processed, y_test, verbose=0)
+print(f"R² no conjunto de TREINO: {r2_train:.4f}")
+print(f"R² no conjunto de TESTE: {r2_test:.4f}")
+print(f"MSE no conjunto de TREINO: {mse_train:.4f}")
+print(f"MSE no conjunto de TESTE: {mse_test:.4f}")
 
-print(f"Perda (MSE) do modelo TensorFlow no conjunto de TESTE: {loss_tf:.4f}")
-print(f"Erro Absoluto Médio (MAE) do modelo TensorFlow no conjunto de TESTE: {mae_tf:.4f}")
+# Análise adicional
+diferenca_r2 = r2_train - r2_test
+print(f"\nDiferença R² (Treino - Teste): {diferenca_r2:.4f}")
+if diferenca_r2 < 0.05:
+    print("✅ Modelo com baixo overfitting!")
+else:
+    print("⚠️ Possível overfitting detectado.")
 
-# Fazer previsões no conjunto de teste para calcular o R^2
-y_pred_tf = model_tf.predict(X_test_processed).flatten()
+print(f"Modelo explica {r2_test*100:.1f}% da variância nos dados de teste.")
 
-# Calcular o R^2 para o modelo TensorFlow
-r2_tf = r2_score(y_test, y_pred_tf)
-print(f"Desempenho do modelo TensorFlow (R^2) no conjunto de TESTE: {r2_tf:.4f}")
-
-print("\n--- Processo do TensorFlow Concluído ---")
+print("\n--- Processo TensorFlow Concluído ---")
